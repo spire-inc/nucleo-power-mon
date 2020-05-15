@@ -5,6 +5,15 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+class ParseState(Enum):
+    IDLE,
+    START,
+    METADATA,
+    METADATA_ENDING,
+    TIMESTAMP,
+    DATA
+
+
 class PowerMon(object):
 
     PRODUCT_ID = 0x5740
@@ -53,16 +62,42 @@ class PowerMon(object):
         self._parse_data()
 
     def _parse_data(self):
+        state = ParseState.START
 
-        isMetadata = False
+        timeStamp = bytearray()
 
         while(True):
-            data = self._dev.read(2)
+            data = self._dev.read(1)
+
+            if state == ParseState.IDLE:
+                if (data[0] == 0xF0):
+                    state = ParseState.START
+            elif state == ParseState.START:
+                if (data[1] == 0xF3):
+                    logger.debug("Detecting timestamp")
+                    state = ParseState.TIMESTAMP
+                    timeStamp = bytearray()
+                else:
+                    logger.debug("Detecting metadata")
+                    state = ParseState.METADATA
+            elif state == ParseState.METADATA:
+                if (data[0] == 0xFF):
+                    state = ParseState.METADATA_ENDING
+            elif state == ParseState.METADATA_ENDING:
+                if (data[0] == 0xFF):
+                    state = ParseState.START.
+            elif state == ParseState.TIMESTAMP:
+
+                timeStamp.append(data)
+
+                if (len(timeStamp) == 8):
+                    state = ParseState.DATA
+            elif state == ParseState.DATA:
 
             if (len(data) == 0):
                 break
 
-            #logger.info("RCV: raw {} hex {}".format(data, data.hex()))
+            logger.info("RCV: raw {} hex {}".format(data, data.hex()))
 
 
 
@@ -106,6 +141,9 @@ class PowerMon(object):
             if (len(data.decode().strip()) != 0):
                 logger.debug("Line: {}".format(data.decode().strip()))
                 lines = lines - 1
+            else:
+                logger.debug("Empty line")
+
 
     def _reset(self):
         logger.info("Resetting board, please wait")
