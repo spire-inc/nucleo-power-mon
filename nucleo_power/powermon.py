@@ -98,8 +98,12 @@ class PowerMon(object):
                 if (data[0] == 0xF0):
                     md = self._parse_md(data[1])
                 else:
-                    logger.debug("Collected data: {}".format(data.hex()))
+                    logger.debug("Collected value: {}".format(self._convert_reading(data)))
 
+    def _convert_reading(self, reading):
+        power = (reading[0] & 0xF0) >> 4
+        value = int.from_bytes(reading, 'big', signed = False) & 0x0FFF
+        return value * (16 ** -power)
 
     def stop(self):
         #TODO
