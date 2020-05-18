@@ -6,12 +6,8 @@ from enum import Enum
 logger = logging.getLogger(__name__)
 
 class ParseState(Enum):
-    IDLE,
-    START,
-    METADATA,
-    METADATA_ENDING,
-    TIMESTAMP,
-    DATA
+    IDLE = 0,
+    START = 1
 
 
 class PowerMon(object):
@@ -61,44 +57,48 @@ class PowerMon(object):
         self._start_capture()
         self._parse_data()
 
-    def _parse_data(self):
-        state = ParseState.START
-
-        timeStamp = bytearray()
-
-        while(True):
+    def _parse_md(self, metadataType = None):
+        collected = False
+        if (metadataType is None):
+            mdType = self._dev.read(1)
+        else:
+            mdType = bytes([metadataType])
+        logger.debug("Parsing MD of type {}".format(mdType.hex()))
+        md = bytearray()
+        while(not collected):
             data = self._dev.read(1)
 
-            if state == ParseState.IDLE:
-                if (data[0] == 0xF0):
-                    state = ParseState.START
-            elif state == ParseState.START:
-                if (data[1] == 0xF3):
-                    logger.debug("Detecting timestamp")
-                    state = ParseState.TIMESTAMP
-                    timeStamp = bytearray()
+            if (data[0] == 0xFF):
+                secondByte = self._dev.read(1)
+                if (secondByte[0] == 0xFF):
+                    collected = True
+                    break
                 else:
-                    logger.debug("Detecting metadata")
-                    state = ParseState.METADATA
-            elif state == ParseState.METADATA:
-                if (data[0] == 0xFF):
-                    state = ParseState.METADATA_ENDING
-            elif state == ParseState.METADATA_ENDING:
-                if (data[0] == 0xFF):
-                    state = ParseState.START.
-            elif state == ParseState.TIMESTAMP:
+                    logger.error("Expected 0xFF in MD detection")
 
-                timeStamp.append(data)
+            md.append(data[0])
 
-                if (len(timeStamp) == 8):
-                    state = ParseState.DATA
-            elif state == ParseState.DATA:
+        logger.debug("Detected MD type: {} value {}".format(mdType.hex(), md.hex()))
+        return md
 
-            if (len(data) == 0):
-                break
+    def _parse_data(self):
+        state = ParseState.IDLE
+        collectedData = bytearray()
+        readBytes = 1
+        while(True):
+            data = self._dev.read(readBytes)
 
-            logger.info("RCV: raw {} hex {}".format(data, data.hex()))
-
+            #we first need to wait for the first metadata message before we can start collection
+            if (state == ParseState.IDLE):
+                if (data[0] == 0xF0):
+                    md = self._parse_md()
+                    state = ParseState.START
+                    readBytes = 2
+            elif (state == ParseState.START):
+                if (data[0] == 0xF0):
+                    md = self._parse_md(data[1])
+                else:
+                    logger.debug("Collected data: {}".format(data.hex()))
 
 
     def stop(self):
