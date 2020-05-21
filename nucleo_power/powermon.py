@@ -9,6 +9,44 @@ class ParseState(Enum):
     IDLE = 0,
     START = 1
 
+class Metadata(object):
+    ERROR = 0xF1
+    INFO = 0xF2
+    TIMESTAMP = 0xF3
+    ACQ_END = 0xF4
+    OVERCURRENT = 0xF5
+    POWERDOWN = 0xF6
+    VOLTAGE_GET = 0xF7
+    TEMPERATURE = 0xF8
+    POWER_GET = 0xF9
+
+    def __init__(self, mdType):
+        self._mdType = mdType
+
+class ErrorMd(Metadata):
+
+    def __init__(self, mdType, buf):
+        super().__init__(mdType)
+        self.error = str(buf, 'ascii')
+
+class InfoMd(Metadata):
+
+    def __init__(self, mdType, buf):
+        super().__init__(mdType)
+        self.info = str(buf, 'ascii')
+
+class Timestamp(Metadata):
+
+    def __init__(self, mdType, buf):
+        super().__init__(mdType)
+
+        self.timestamp = int.from_bytes(buf[:4], 'big', signed = False)
+        self.loadPct = int(buf[4])
+
+class AcqEndMd(Metadata):
+
+    def __init__(self, mdType, buf):
+        super().__init__(mdType)
 
 class PowerMon(object):
 
@@ -60,11 +98,11 @@ class PowerMon(object):
     def _parse_md(self, metadataType = None):
         collected = False
         if (metadataType is None):
-            mdType = self._dev.read(1)
+            mdType = int(self._dev.read(1)[0])
         else:
-            mdType = bytes([metadataType])
-        logger.debug("Parsing MD of type {}".format(mdType.hex()))
-        md = bytearray()
+            mdType = metadataType
+        logger.debug("Parsing MD of type {}".format(hex(mdType)))
+        mdBuf = bytearray()
         while(not collected):
             data = self._dev.read(1)
 
@@ -76,9 +114,26 @@ class PowerMon(object):
                 else:
                     logger.error("Expected 0xFF in MD detection")
 
-            md.append(data[0])
+            mdBuf.append(data[0])
 
-        logger.debug("Detected MD type: {} value {}".format(mdType.hex(), md.hex()))
+        logger.debug("Detected MD type: {} value {}".format(hex(mdType), mdBuf.hex()))
+
+        md = None
+
+        if (mdType == Metadata.ERROR):
+            md = ErrorMd(mdType, mdBuf)
+            logger.error("Caught MD error: {}".format(md.error))
+        elif (mdType == Metadata.INFO):
+            md = InfoMd(mdType, mdBuf)
+            logger.info("Received MD info: {}".format(md.info))
+        elif (mdType == Metadata.TIMESTAMP):
+            md = Timestamp(mdType, mdBuf)
+            logger.info("Received TS: {} {}".format(md.timestamp, md.loadPct))
+        elif (mdType == Metadata.ACQ_END):
+            md = AcqEndMd(mdType, mdBuf)
+            logger.info("End of ACQ")
+        elif (mdType == Metadata.OVERCURRENT):
+            logger.error("Overcurrent error")
         return md
 
     def _parse_data(self):
@@ -97,8 +152,12 @@ class PowerMon(object):
             elif (state == ParseState.START):
                 if (data[0] == 0xF0):
                     md = self._parse_md(data[1])
+                    if (isinstance(md, AcqEndMd)):
+                        logger.info("Finished acquisition")
+                        break
                 else:
-                    logger.debug("Collected value: {}".format(self._convert_reading(data)))
+                    pass
+                    #logger.debug("Collected value: {}".format(self._convert_reading(data)))
 
     def _convert_reading(self, reading):
         power = (reading[0] & 0xF0) >> 4
